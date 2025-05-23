@@ -1,101 +1,130 @@
+import os
 import customtkinter as ctk
 from tkinter import Canvas, messagebox
 from PIL import Image, ImageTk
-import os
 
-# Словари для хранения изображений, объектов и состояния
+PART_FOLDERS = {
+    "Näo kuju": "fotorobot/naovorm",
+    "Silmad": "fotorobot/silmad",
+    "Nina": "fotorobot/ninad",
+    "Suu": "fotorobot/suud",
+}
+
+IMAGE_SIZE = (400, 400)
+CANVAS_SIZE = (600, 600)
+
 pildid = {}
+current_indices = {}
 objektid = {}
-olemas = {}
+controls = {}
 
-# Путь к папке с изображениями
-IMAGE_FOLDER = "fotorobot"
+LAYER_ORDER = ["Näo kuju", "Nina", "Silmad", "Suu"]
 
-# Функция для отображения части лица
-def toggle_osa(nimi, fail, x, y):
-    if nimi in objektid:
-        canvas.delete(objektid[nimi])  # Удаляем изображение с canvas
-        objektid.pop(nimi)  # Удаляем объект из словаря
-        olemas[nimi] = False  # Обновляем состояние
-    else:
-        # Проверка наличия файла перед загрузкой
-        if not os.path.exists(f"{IMAGE_FOLDER}/{fail}"):
-            messagebox.showerror("Ошибка", f"Файл {fail} не найден!")
-            return
+def load_images():
+    for osa, folder in PART_FOLDERS.items():
+        pildid[osa] = []
+        if not os.path.exists(folder):
+            os.makedirs(folder)
+        files = sorted([f for f in os.listdir(folder) if f.lower().endswith(".png")])
+        for f in files:
+            try:
+                img = Image.open(os.path.join(folder, f)).convert("RGBA").resize(IMAGE_SIZE, Image.NEAREST)
+                tk_img = ImageTk.PhotoImage(img)
+                pildid[osa].append((f, tk_img))
+            except Exception as e:
+                print(f"Ошибка загрузки {f}: {e}")
 
-        try:
-            pilt_img = Image.open(f"{IMAGE_FOLDER}/{fail}").convert("RGBA").resize((200, 200))  # Загружаем и изменяем размер
-            tk_img = ImageTk.PhotoImage(pilt_img)
-
-            pildid[nimi] = tk_img  # Сохраняем изображение
-            objektid[nimi] = canvas.create_image(x, y, image=tk_img)  # Создаем изображение на canvas
-            olemas[nimi] = True  # Обновляем состояние
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось загрузить изображение: {e}")
-
-# Функция для сохранения выбранных частей лица в файл
-def salvesta_robot():
-    valikud = [nimi for nimi, olek in olemas.items() if olek]
-    try:
-        with open("fotorobotid.txt", "w") as file:
-            file.write(",".join(valikud))
-        messagebox.showinfo("Успех", "Фоторобот сохранён!")
-    except Exception as e:
-        messagebox.showerror("Ошибка", f"Не удалось сохранить фоторобот: {e}")
-
-# Функция для загрузки последнего фоторобота
-def lae_viimane_robot():
-    # Удаляем все текущие изображения с canvas
+def update_all_images():
     canvas.delete("all")
-    objektid.clear()  # Очистка словаря объектов
-    olemas.clear()    # Очистка словаря состояний
+    objektid.clear()
 
+    for osa in LAYER_ORDER:
+        if osa not in current_indices or not pildid[osa]:
+            continue
+        idx = current_indices[osa]
+        fname, tk_img = pildid[osa][idx]
+        controls[osa].configure(text=fname)
+        objektid[osa] = canvas.create_image(300, 300, image=tk_img)
+
+def prev_image(osa):
+    if not pildid[osa]:
+        return
+    current_indices[osa] = (current_indices[osa] - 1) % len(pildid[osa])
+    update_all_images()
+
+def next_image(osa):
+    if not pildid[osa]:
+        return
+    current_indices[osa] = (current_indices[osa] + 1) % len(pildid[osa])
+    update_all_images()
+
+def save_robot():
     try:
-        with open("fotorobotid.txt", "r") as file:
-            valikud = file.read().split(",")
-        for nimi in valikud:
-            if nimi in pildid:
-                toggle_osa(nimi, f"{nimi}.png", 200, 200)
-        messagebox.showinfo("Успех", "Последний фоторобот загружен!")
-    except FileNotFoundError:
-        messagebox.showerror("Ошибка", "Файл с фотороботами не найден!")
+        # Loome uue tühja pildi läbipaistva taustaga
+        lõpptulemus = Image.new("RGBA", IMAGE_SIZE, (255, 255, 255, 0))
+
+        for osa in LAYER_ORDER:
+            if osa not in current_indices or not pildid[osa]:
+                continue
+
+            idx = current_indices[osa]
+            failinimi, _ = pildid[osa][idx]
+            pildi_tee = os.path.join(PART_FOLDERS[osa], failinimi)
+
+            # Laeme pildi uuesti ja kombineerime
+            kiht = Image.open(pildi_tee).convert("RGBA").resize(IMAGE_SIZE, Image.NEAREST)
+            lõpptulemus = Image.alpha_composite(lõpptulemus, kiht)
+
+        # Salvesta lõpptulemus PNG-failina
+        lõpptulemus.save("fotorobot.png")
+        messagebox.showinfo("Edukalt salvestatud", "Fotorobot on salvestatud kui 'fotorobot.png'!")
+
     except Exception as e:
-        messagebox.showerror("Ошибка", f"Не удалось загрузить фоторобот: {e}")
+        messagebox.showerror("Viga", f"Fotoroboti salvestamine ebaõnnestus: {e}")
 
-# Основное окно приложения
+
+ctk.set_appearance_mode("dark")  # или "light"
+ctk.set_default_color_theme("blue")
+
 app = ctk.CTk()
+app.title("Fotorobot - Листай части лица стрелочками")
+app.geometry("1200x700")
 
-# Canvas для отображения фоторобота
-canvas = Canvas(app, width=400, height=400, bg="white")
-canvas.pack(side="right", padx=10, pady=10)
+load_images()
 
-# Frame для кнопок с Checkbutton
-frame_mus = ctk.CTkFrame(app)
-frame_mus.pack(side="left", padx=10, pady=10)
+control_frame = ctk.CTkScrollableFrame(app, width=550, height=650)
+control_frame.pack(side="left", padx=10, pady=10, fill="y")
 
-# Кнопки для выбора частей лица
-btn_nao_ovaal = ctk.CTkCheckBox(frame_mus, text="Näo ovaal", command=lambda: toggle_osa("näo_ovaal", "naovorm1.png", 200, 150))
-btn_nao_ovaal.pack()
+canvas = Canvas(app, width=CANVAS_SIZE[0], height=CANVAS_SIZE[1], bg="white")
+canvas.pack(side="right", padx=20, pady=20)
 
-btn_silmad = ctk.CTkCheckBox(frame_mus, text="Silmad", command=lambda: toggle_osa("silmad", "silmad1.png", 200, 150))
-btn_silmad.pack()
+for osa in pildid:
+    frame = ctk.CTkFrame(control_frame, fg_color="#2b2b2b", corner_radius=8)
+    frame.pack(fill="x", pady=10)
 
-btn_anteen = ctk.CTkCheckBox(frame_mus, text="Anteen", command=lambda: toggle_osa("anteen", "anteen1.png", 200, 150))
-btn_anteen.pack()
+    label = ctk.CTkLabel(frame, text=osa, font=("Segoe UI", 22, "bold"))
+    label.pack(padx=10, pady=5)
 
-btn_suu = ctk.CTkCheckBox(frame_mus, text="Suu", command=lambda: toggle_osa("suu", "suu1.png", 200, 150))
-btn_suu.pack()
+    btn_frame = ctk.CTkFrame(frame)
+    btn_frame.pack()
 
+    btn_prev = ctk.CTkButton(btn_frame, text="<", width=40,
+                             command=lambda o=osa: prev_image(o))
+    btn_prev.pack(side="left", padx=10, pady=5)
 
-# Кнопки для сохранения и загрузки фоторобота
-btn_salvesta = ctk.CTkButton(frame_mus, text="Salvesta fotorobot", command=salvesta_robot)
+    controls[osa] = ctk.CTkLabel(btn_frame, text="", font=("Segoe UI", 16))
+    controls[osa].pack(side="left", padx=10)
+
+    btn_next = ctk.CTkButton(btn_frame, text=">", width=40,
+                             command=lambda o=osa: next_image(o))
+    btn_next.pack(side="left", padx=10, pady=5)
+
+    current_indices[osa] = 0  # инициализация индекса для каждой части
+
+update_all_images()  # один раз отрисовать все части после инициализации
+
+btn_salvesta = ctk.CTkButton(control_frame, text="Сохранить фоторобота", command=save_robot)
 btn_salvesta.pack(pady=10)
-
-btn_vaata_viimane = ctk.CTkButton(frame_mus, text="Vaata viimast robotit", command=lae_viimane_robot)
-btn_vaata_viimane.pack(pady=10)
-
-# Инициализируем состояние для части лица
-olemas["näo_ovaal"] = False
-toggle_osa("näo_ovaal", "naovorm1.png", 200, 100)
+    
 
 app.mainloop()
